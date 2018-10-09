@@ -1,13 +1,51 @@
-
 #include "subroutines.cuh"
 
 
-/*Define the optimized launching configurations*/
+//-----------------------------------------------------------------------//
+//* Some common small functions and constants *//
+//-----------------------------------------------------------------------//
 
 const int constSharedMemSize = 256;
 
+const int maxThreads = 256;  // number of threads per block
+
 #define imin(a,b) (a<b?a:b)
 
+bool isPow2(unsigned int x) {
+	return ((x&(x - 1)) == 0);
+}
+
+unsigned int nextPow2(unsigned int x) {
+	--x;
+	x |= x >> 1;
+	x |= x >> 2;
+	x |= x >> 4;
+	x |= x >> 8;
+	x |= x >> 16;
+	return ++x;
+}
+
+__global__ void add_two_values_in_gpu(double *d_input, double *d_res)
+{
+	int tid = threadIdx.x;
+
+	if (tid == 0)
+		d_res[0] = d_input[0] + d_res[1];
+}
+
+__global__ void access_value_in_gpu(double *d_input, double *d_res, int index)
+{
+	int tid = threadIdx.x;
+
+	if (tid == 0)
+		d_res[0] = d_input[index];
+}
+
+
+
+//-----------------------------------------------------------------------//
+//* Reduce from cuda book	*//
+//-----------------------------------------------------------------------//
 
 __global__ void kernel_sum(double *d_data, double *d_result, int data_size)
 {
@@ -32,6 +70,7 @@ __global__ void kernel_sum(double *d_data, double *d_result, int data_size)
 	if (id == 0)
 		d_result[blockIdx.x] = s_data[0];
 }
+
 
 double sum_gpu(double *d_data, int data_size){
 
@@ -60,6 +99,10 @@ double sum_gpu(double *d_data, int data_size){
 
 
 
+
+//----------------------------------------------------------------------------//
+//* Three kernels of reduce algorithms using threads matching the data size  *//
+//----------------------------------------------------------------------------//
 
 __global__ void kernel_reduce_score10(double *d_input, double *d_res, int size)
 {
@@ -137,8 +180,11 @@ __global__ void kernel_reduce_score30(double *d_input, double *d_res, int size)
 
 double sum_gpu_reduce_full(void(*kernel)(double*, double*, int), double *d_input, int size, int flag)
 {
+	//int threadsPerBlock = constSharedMemSize;
+	//int numBlocks = imin(65536, (size + constSharedMemSize - 1) / constSharedMemSize);
+
 	int threadsPerBlock = constSharedMemSize;
-	int numBlocks = imin(65536, (size + constSharedMemSize - 1) / constSharedMemSize);
+	int numBlocks = imin(65536, (nextPow2(size - 1) + constSharedMemSize - 1) / constSharedMemSize);
 
 	double *d_result;
 	cudaMalloc((void**)&d_result, numBlocks * sizeof(double));
@@ -159,6 +205,20 @@ double sum_gpu_reduce_full(void(*kernel)(double*, double*, int), double *d_input
 }
 
 
+
+
+//----------------------------------------------------------------------------//
+//* Three kernels of reduce algorithms using half threads of data size  *//
+//----------------------------------------------------------------------------//
+
+__device__ void warpReduce(volatile double* s_data, int tid) {
+	s_data[tid] += s_data[tid + 32];
+	s_data[tid] += s_data[tid + 16];
+	s_data[tid] += s_data[tid + 8];
+	s_data[tid] += s_data[tid + 4];
+	s_data[tid] += s_data[tid + 2];
+	s_data[tid] += s_data[tid + 1];
+}
 
 // deal with the first loop of idea threads
 __global__ void kernel_reduce_half_score40(double *d_input, double *d_res, int size)
@@ -187,17 +247,6 @@ __global__ void kernel_reduce_half_score40(double *d_input, double *d_res, int s
 
 	if (tid == 0)
 		d_res[blockIdx.x] = s_data[tid];
-}
-
-
-
-__device__ void warpReduce(volatile double* s_data, int tid) {
-	s_data[tid] += s_data[tid + 32];
-	s_data[tid] += s_data[tid + 16];
-	s_data[tid] += s_data[tid + 8];
-	s_data[tid] += s_data[tid + 4];
-	s_data[tid] += s_data[tid + 2];
-	s_data[tid] += s_data[tid + 1];
 }
 
 
@@ -235,27 +284,14 @@ __global__ void kernel_reduce_half_score50(double *d_input, double *d_res, int s
 }
 
 
-__global__ void add_two_values_in_gpu(double *d_input, double *d_res)
-{
-	int tid = threadIdx.x;
-
-	if (tid == 0)
-		d_res[0] = d_input[0] + d_res[1];
-}
-
-__global__ void access_value_in_gpu(double *d_input, double *d_res, int index)
-{
-	int tid = threadIdx.x;
-
-	if (tid == 0)
-		d_res[0] = d_input[index];
-}
-
 
 double sum_gpu_reduce_half(void(*kernel)(double*, double*, int), double *d_input, int size, int flag)
 {
+	//int threadsPerBlock = constSharedMemSize;
+	//int numBlocks = imin(65536, (size / 2 + constSharedMemSize - 1) / constSharedMemSize);
+
 	int threadsPerBlock = constSharedMemSize;
-	int numBlocks = imin(65536, (size / 2 + constSharedMemSize - 1) / constSharedMemSize);
+	int numBlocks = imin(65536, (nextPow2((size - 1) / 2) + constSharedMemSize - 1) / constSharedMemSize);
 
 	double *d_result;
 	cudaMalloc((void**)&d_result, numBlocks * sizeof(double));
@@ -274,7 +310,6 @@ double sum_gpu_reduce_half(void(*kernel)(double*, double*, int), double *d_input
 	}
 	return sum_gpu_reduce_half(kernel, d_result, numBlocks, 1);
 }
-
 
 
 double sum_gpu_reduce_half_wrap(void(*kernel)(double*, double*, int), double *d_input, int size, int flag){
@@ -296,27 +331,9 @@ double sum_gpu_reduce_half_wrap(void(*kernel)(double*, double*, int), double *d_
 
 
 
-//-----------------------------------------------------------------------//
-// others to consider
-//-----------------------------------------------------------------------//
-const int maxThreads = 256;  // number of threads per block
-
-bool isPow2(unsigned int x)
-{
-	return ((x&(x - 1)) == 0);
-}
-
-unsigned int nextPow2(unsigned int x)
-{
-	--x;
-	x |= x >> 1;
-	x |= x >> 2;
-	x |= x >> 4;
-	x |= x >> 8;
-	x |= x >> 16;
-	return ++x;
-}
-
+//----------------------------------------------------------------------------//
+//* Complete unroll last warp, using template  *//
+//----------------------------------------------------------------------------//
 
 template <unsigned int blockSize>
 __device__ void warpReduce2(volatile double *sdata, int tid) {

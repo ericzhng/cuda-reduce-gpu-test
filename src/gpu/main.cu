@@ -17,12 +17,12 @@ int main()
 
 
 	// assign variables
-	int nreps = 50;		// repeated counts, to average execution time
+	int nreps = 4;		// repeated counts, to average execution time
 
 
 	//**********************************************************//
 	// data size
-	unsigned data_size = 8 * 1024 * 1024;	// 4 Megabyte data
+	unsigned data_size = 3015;	// 4 Megabyte data
 
 	// int data_size = 256 - 1;
 	//**********************************************************//
@@ -51,7 +51,7 @@ int main()
 	cudaThreadSynchronize();
 	cudaEventElapsedTime(&elapsed_time_ms, start, stop);
 	elapsed_time_ms /= nreps;
-	printf("host to device transfer bandWidth: %f\n", gb / elapsed_time_ms * 1e3);
+	printf("host to device transfer bandWidth: %f Gb/s\n", gb / elapsed_time_ms * 1e3);
 
 
 
